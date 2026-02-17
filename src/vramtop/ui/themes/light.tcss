@@ -1,0 +1,83 @@
+/* vramtop light theme — light backgrounds, dark text */
+
+Screen {
+    background: #f5f5f5;
+    color: #1a1a1a;
+}
+
+Header {
+    background: #e0e0e0;
+    color: #1a1a1a;
+}
+
+Footer {
+    background: #e0e0e0;
+    color: #1a1a1a;
+}
+
+GPUCard {
+    border: solid #0066cc;
+    background: #ffffff;
+    color: #1a1a1a;
+}
+
+#gpu-header {
+    color: #0066cc;
+    text-style: bold;
+}
+
+MemoryBar {
+    color: #1a1a1a;
+}
+
+Timeline {
+    color: #0066cc;
+}
+
+ProcessTable {
+    color: #1a1a1a;
+}
+
+ProcessTable > .datatable--header {
+    background: #e8e8e8;
+    color: #0066cc;
+    text-style: bold;
+}
+
+ProcessTable > .datatable--cursor {
+    background: #d0e0f0;
+    color: #000000;
+}
+
+OOMAlert {
+    color: #cc0000;
+    text-style: bold;
+}
+
+PhaseBadge.phase-stable {
+    color: #008800;
+}
+
+PhaseBadge.phase-growing {
+    color: #cc8800;
+}
+
+PhaseBadge.phase-shrinking {
+    color: #0066cc;
+}
+
+PhaseBadge.phase-volatile {
+    color: #cc0000;
+}
+
+DetailPanel {
+    background: #ffffff;
+    border-left: solid #0066cc;
+    color: #1a1a1a;
+}
+
+KillDialog #kill-container {
+    background: #ffffff;
+    border: thick #cc0000;
+    color: #1a1a1a;
+}

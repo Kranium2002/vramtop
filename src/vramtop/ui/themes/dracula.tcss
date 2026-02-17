@@ -1,0 +1,83 @@
+/* vramtop Dracula theme — purple accent on dark */
+
+Screen {
+    background: #282a36;
+    color: #f8f8f2;
+}
+
+Header {
+    background: #21222c;
+    color: #f8f8f2;
+}
+
+Footer {
+    background: #21222c;
+    color: #f8f8f2;
+}
+
+GPUCard {
+    border: solid #bd93f9;
+    background: #282a36;
+    color: #f8f8f2;
+}
+
+#gpu-header {
+    color: #bd93f9;
+    text-style: bold;
+}
+
+MemoryBar {
+    color: #f8f8f2;
+}
+
+Timeline {
+    color: #8be9fd;
+}
+
+ProcessTable {
+    color: #f8f8f2;
+}
+
+ProcessTable > .datatable--header {
+    background: #21222c;
+    color: #bd93f9;
+    text-style: bold;
+}
+
+ProcessTable > .datatable--cursor {
+    background: #44475a;
+    color: #f8f8f2;
+}
+
+OOMAlert {
+    color: #ff5555;
+    text-style: bold;
+}
+
+PhaseBadge.phase-stable {
+    color: #50fa7b;
+}
+
+PhaseBadge.phase-growing {
+    color: #f1fa8c;
+}
+
+PhaseBadge.phase-shrinking {
+    color: #8be9fd;
+}
+
+PhaseBadge.phase-volatile {
+    color: #ff5555;
+}
+
+DetailPanel {
+    background: #282a36;
+    border-left: solid #bd93f9;
+    color: #f8f8f2;
+}
+
+KillDialog #kill-container {
+    background: #282a36;
+    border: thick #ff5555;
+    color: #f8f8f2;
+}

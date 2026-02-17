@@ -1,0 +1,83 @@
+/* vramtop Catppuccin Mocha theme — pastel on dark */
+
+Screen {
+    background: #1e1e2e;
+    color: #cdd6f4;
+}
+
+Header {
+    background: #181825;
+    color: #cdd6f4;
+}
+
+Footer {
+    background: #181825;
+    color: #cdd6f4;
+}
+
+GPUCard {
+    border: solid #89b4fa;
+    background: #1e1e2e;
+    color: #cdd6f4;
+}
+
+#gpu-header {
+    color: #89b4fa;
+    text-style: bold;
+}
+
+MemoryBar {
+    color: #cdd6f4;
+}
+
+Timeline {
+    color: #74c7ec;
+}
+
+ProcessTable {
+    color: #cdd6f4;
+}
+
+ProcessTable > .datatable--header {
+    background: #181825;
+    color: #89b4fa;
+    text-style: bold;
+}
+
+ProcessTable > .datatable--cursor {
+    background: #313244;
+    color: #cdd6f4;
+}
+
+OOMAlert {
+    color: #f38ba8;
+    text-style: bold;
+}
+
+PhaseBadge.phase-stable {
+    color: #a6e3a1;
+}
+
+PhaseBadge.phase-growing {
+    color: #f9e2af;
+}
+
+PhaseBadge.phase-shrinking {
+    color: #89b4fa;
+}
+
+PhaseBadge.phase-volatile {
+    color: #f38ba8;
+}
+
+DetailPanel {
+    background: #1e1e2e;
+    border-left: solid #89b4fa;
+    color: #cdd6f4;
+}
+
+KillDialog #kill-container {
+    background: #1e1e2e;
+    border: thick #f38ba8;
+    color: #cdd6f4;
+}

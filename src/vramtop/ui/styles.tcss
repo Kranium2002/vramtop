@@ -1,0 +1,66 @@
+/* vramtop base layout stylesheet */
+
+Screen {
+    layout: vertical;
+    overflow-y: auto;
+}
+
+/* GPU card container */
+GPUCard {
+    border: solid $primary;
+    padding: 0 1;
+    margin: 0 0 1 0;
+    height: auto;
+}
+
+/* Memory bar */
+MemoryBar {
+    height: 1;
+    margin: 0 0 0 0;
+}
+
+/* Timeline sparkline */
+Timeline {
+    height: 1;
+    margin: 0 0 0 0;
+}
+
+/* Phase badge */
+PhaseBadge {
+    height: 1;
+    width: auto;
+}
+
+PhaseBadge.phase-stable {
+    color: $success;
+}
+
+PhaseBadge.phase-growing {
+    color: $warning;
+}
+
+PhaseBadge.phase-shrinking {
+    color: $primary;
+}
+
+PhaseBadge.phase-volatile {
+    color: $error;
+}
+
+/* OOM alert */
+OOMAlert {
+    height: auto;
+    color: $error;
+    text-style: bold;
+}
+
+OOMAlert.hidden {
+    display: none;
+}
+
+/* Process table */
+ProcessTable {
+    height: auto;
+    max-height: 16;
+    margin: 0 0 0 0;
+}

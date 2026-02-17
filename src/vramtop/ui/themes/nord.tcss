@@ -1,0 +1,83 @@
+/* vramtop Nord theme — Arctic blue-gray palette */
+
+Screen {
+    background: #2e3440;
+    color: #d8dee9;
+}
+
+Header {
+    background: #3b4252;
+    color: #eceff4;
+}
+
+Footer {
+    background: #3b4252;
+    color: #eceff4;
+}
+
+GPUCard {
+    border: solid #88c0d0;
+    background: #2e3440;
+    color: #d8dee9;
+}
+
+#gpu-header {
+    color: #88c0d0;
+    text-style: bold;
+}
+
+MemoryBar {
+    color: #d8dee9;
+}
+
+Timeline {
+    color: #81a1c1;
+}
+
+ProcessTable {
+    color: #d8dee9;
+}
+
+ProcessTable > .datatable--header {
+    background: #3b4252;
+    color: #88c0d0;
+    text-style: bold;
+}
+
+ProcessTable > .datatable--cursor {
+    background: #434c5e;
+    color: #eceff4;
+}
+
+OOMAlert {
+    color: #bf616a;
+    text-style: bold;
+}
+
+PhaseBadge.phase-stable {
+    color: #a3be8c;
+}
+
+PhaseBadge.phase-growing {
+    color: #ebcb8b;
+}
+
+PhaseBadge.phase-shrinking {
+    color: #81a1c1;
+}
+
+PhaseBadge.phase-volatile {
+    color: #bf616a;
+}
+
+DetailPanel {
+    background: #2e3440;
+    border-left: solid #88c0d0;
+    color: #d8dee9;
+}
+
+KillDialog #kill-container {
+    background: #2e3440;
+    border: thick #bf616a;
+    color: #d8dee9;
+}
