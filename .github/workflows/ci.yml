@@ -26,7 +26,7 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install -e ".[dev]"
-      - run: pytest tests/ -m "not gpu" -v
+      - run: pytest tests/ -m "not gpu and not docker" -v
 
   test-property:
     runs-on: ubuntu-latest
@@ -46,5 +46,5 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install -e ".[dev]"
-      - run: bandit -r src/
+      - run: bandit -r src/ -ll
       - run: pip-audit

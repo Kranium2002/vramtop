@@ -83,7 +83,7 @@ class OOMPredictionConfig(BaseModel):
 
     algorithm: Literal["variance", "pelt"] = "variance"
     min_sustained_samples: int = 10
-    min_rate_mb_per_sec: float = 5.0
+    min_rate_mb_per_sec: float = 1.0
 
 
 class ExportConfig(BaseModel):

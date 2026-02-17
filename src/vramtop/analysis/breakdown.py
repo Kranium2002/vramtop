@@ -42,15 +42,17 @@ def estimate_breakdown(
     weights_est = min(weights_sum, total_used)
     dynamic_est = total_used - weights_est
 
-    # Confidence based on how close file sizes are to total
-    # High confidence when weights are 30-90% of total
+    # Confidence based on how close file sizes are to total.
+    # File-size-based estimates are inherently imprecise: model files may be
+    # compressed, quantized differently on-disk vs in-memory, or only partially
+    # loaded.  Cap at 0.5 ("moderate") even in the best case.
     ratio = weights_est / total_used if total_used > 0 else 0.0
     if 0.3 <= ratio <= 0.9:
-        confidence = 0.7
+        confidence = 0.5
     elif 0.1 <= ratio <= 0.95:
-        confidence = 0.4
+        confidence = 0.3
     else:
-        confidence = 0.2
+        confidence = 0.15
 
     return MemoryBreakdown(
         total_bytes=total_used,

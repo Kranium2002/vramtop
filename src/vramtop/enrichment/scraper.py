@@ -106,7 +106,13 @@ class BaseScraper(ABC):
         self._enforce_rate_limit(pid)
 
         url = f"http://127.0.0.1:{port}{self.endpoint}"
-        raw = self._http_get(url)
+        try:
+            raw = self._http_get(url)
+        except Exception:
+            # On network failure, clear the rate-limit timestamp so
+            # the next attempt isn't throttled by a failed request.
+            self._rate_limit_timestamps.pop((pid, self.endpoint), None)
+            raise
         return self._parse_response(raw)
 
     # --- Security rules ---

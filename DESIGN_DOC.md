@@ -253,9 +253,9 @@ class PhaseDetector:
         )
 ```
 
-**Stage 2: PELT refinement (Phase 5 — optional `ruptures` dependency)**
+**Stage 2: PELT refinement (Phase 5 — optional `ruptures` dependency) -- IMPLEMENTED**
 
-For post-mortem analysis and historical playback. Uses `ruptures` with `l2` cost model (piecewise constant, O(n) average). Framework-specific penalty presets:
+For post-mortem analysis and historical playback. Uses `ruptures` with `l2` cost model (piecewise constant, O(n) average). Framework-specific penalty presets. Gracefully degrades when `ruptures` is not installed (returns empty changepoint list). Implemented in `analysis/pelt_detector.py` with `detect_changepoints()` and `classify_segments()` functions.
 
 ```python
 PENALTY_PRESETS = {
@@ -265,7 +265,43 @@ PENALTY_PRESETS = {
 }
 ```
 
-### 3.3 OOM Prediction
+### 3.3 Per-Process Survival Predictor -- IMPLEMENTED
+
+Complements the GPU-level OOM predictor with per-process "will this OOM?" verdicts. Implemented in `analysis/survival.py`.
+
+**Verdicts:** `OK` (green), `TIGHT` (yellow), `OOM` (red) — shown as badges in the process table.
+
+**Algorithm (stateless):**
+
+1. **Scrape data first** — most accurate when available:
+   - vLLM: uses KV cache utilization (`gpu_cache_usage_perc` v0 / `kv_cache_usage_perc` v1)
+   - SGLang: uses `max_total_num_tokens` pool info
+   - Ollama: excluded (loads fail before model is in VRAM — use NVML-only approach)
+
+2. **Phase shortcut** — if `STABLE` or `SHRINKING`, return `OK`
+
+3. **Multiplier heuristic** (for `GROWING`/`VOLATILE` phases):
+
+```
+Framework/mode       | Multiplier (peak / weights)
+-------------------- | --------------------------
+Inference only       | 1.2x
+Inference long-ctx   | 1.5x
+LoRA / PEFT          | 1.5x
+Full training (SGD)  | 3.0x
+Full training (Adam) | 4.0x
+vLLM/SGLang server   | 1.8x
+Unknown pytorch      | 2.5x (conservative)
+Unknown              | 1.5x (generic)
+```
+
+4. **Pre-allocation awareness** — vLLM, SGLang, TGI, and JAX pre-allocate memory pools at startup. When `model_size_bytes` is unknown and we fall back to `process_used_bytes`, these frameworks use 1.05x multiplier (not the full multiplier) to avoid double-counting the already-allocated pool.
+
+5. **Peak tracking** — historical peak memory per process (`max(process_used)` over time) overrides the multiplier estimate when observed usage exceeds the estimate.
+
+6. **Collective pressure** — if the sum of all processes' estimated peak memory exceeds GPU total, individual OK verdicts are upgraded to TIGHT (and TIGHT to OOM).
+
+### 3.4 OOM Prediction
 
 ```python
 @dataclass
@@ -296,7 +332,9 @@ class OOMPredictor:
 
 ---
 
-## 4. Unix Socket IPC Protocol (Deep Mode)
+## 4. Unix Socket IPC Protocol (Deep Mode) -- IMPLEMENTED
+
+Deep mode IPC is implemented across three modules: `reporter/protocol.py` (message types: HandshakeMsg, MemoryMsg), `reporter/pytorch.py` (PyTorch reporter daemon thread with socket server), and `enrichment/deep_mode.py` (socket discovery, stale cleanup, enrichment integration). See also the survival predictor (`analysis/survival.py`) which provides KV-cache-aware and scrape-data-aware OOM survival predictions.
 
 ### 4.1 Wire Protocol
 
@@ -573,6 +611,7 @@ vramtop/
 │       │   ├── phase_detector.py    # Variance-threshold (Stage 1)
 │       │   ├── pelt_detector.py     # Optional PELT (Stage 2, ruptures)
 │       │   ├── oom_predictor.py     # Range-based, confidence-gated
+│       │   ├── survival.py         # Per-process survival predictor
 │       │   ├── trends.py            # EMA, allocation rate
 │       │   └── breakdown.py         # Weight vs dynamic (labeled estimate)
 │       │
@@ -661,7 +700,7 @@ vramtop/
 | **Phase 2: Intelligence** | 2 weeks | Layer 1 detection (same-UID), OOMPredictor with confidence ranges, weight estimation, container detection, process detail panel, kill dialog |
 | **Phase 3: Beauty** | 1 week | 6 themes, compact/full/mini modes, accessible mode, `NO_COLOR`, polish |
 | **Phase 4: Scraping** | 1 week | vLLM/SGLang/Ollama/llama.cpp metrics (rate-limited, schema-validated, same-UID) |
-| **Phase 5: Depth** | Ongoing | Deep mode (Unix socket IPC), PELT refinement, Prometheus, JSON stream, webhooks, SSH remote, historical playback |
+| **Phase 5: Depth** | Complete (core) | Per-process survival predictor, deep mode (Unix socket IPC), PELT refinement, CSV export, SVG screenshot. Deferred: Prometheus, JSON stream, webhooks, SSH remote, historical playback |
 
 **MVP = Phase 1 + 2 + 3 = ~6 weeks.**
 

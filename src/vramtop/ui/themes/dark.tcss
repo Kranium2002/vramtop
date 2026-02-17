@@ -1,83 +1,85 @@
-/* vramtop dark theme — default high-contrast dark */
+/* vramtop dark theme — modern high-contrast dark with blue accents */
 
 Screen {
-    background: #1a1a2e;
-    color: #eaeaea;
+    background: #0d1117;
+    color: #e6edf3;
 }
 
 Header {
-    background: #16213e;
-    color: #e2e2e2;
+    background: #161b22;
+    color: #58a6ff;
+    text-style: bold;
 }
 
 Footer {
-    background: #16213e;
-    color: #e2e2e2;
+    background: #161b22;
+    color: #8b949e;
 }
 
 GPUCard {
-    border: solid #4a9eff;
-    background: #0f0f23;
-    color: #eaeaea;
+    border: round #58a6ff;
+    background: #0d1117;
+    color: #e6edf3;
 }
 
 #gpu-header {
-    color: #4a9eff;
+    color: #58a6ff;
     text-style: bold;
 }
 
 MemoryBar {
-    color: #eaeaea;
+    color: #e6edf3;
 }
 
 Timeline {
-    color: #7ecfff;
+    color: #7ee787;
 }
 
 ProcessTable {
-    color: #eaeaea;
+    color: #e6edf3;
 }
 
 ProcessTable > .datatable--header {
-    background: #16213e;
-    color: #4a9eff;
+    background: #161b22;
+    color: #58a6ff;
     text-style: bold;
 }
 
 ProcessTable > .datatable--cursor {
-    background: #2a2a4e;
+    background: #1f2937;
     color: #ffffff;
 }
 
 OOMAlert {
-    color: #ff4444;
+    color: #f85149;
     text-style: bold;
 }
 
 PhaseBadge.phase-stable {
-    color: #44ff44;
+    color: #7ee787;
 }
 
 PhaseBadge.phase-growing {
-    color: #ffcc00;
+    color: #d29922;
 }
 
 PhaseBadge.phase-shrinking {
-    color: #4a9eff;
+    color: #58a6ff;
 }
 
 PhaseBadge.phase-volatile {
-    color: #ff4444;
+    color: #f85149;
 }
 
 DetailPanel {
-    background: #0f0f23;
-    border-left: solid #4a9eff;
-    color: #eaeaea;
+    background: #0d1117;
+    border-left: round #58a6ff;
+    color: #e6edf3;
 }
 
 KillDialog #kill-container {
-    background: #0f0f23;
-    border: thick #ff4444;
-    color: #eaeaea;
+    background: #0d1117;
+    border: thick #f85149;
+    color: #e6edf3;
 }
+

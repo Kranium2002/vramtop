@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import argparse
+import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -19,6 +21,34 @@ def _build_parser() -> argparse.ArgumentParser:
         action="version",
         version=f"vramtop {__version__}",
     )
+
+    subparsers = parser.add_subparsers(dest="command")
+
+    # Monitor subcommand (default behavior)
+    monitor = subparsers.add_parser(
+        "monitor", help="Launch the GPU monitoring TUI (default)"
+    )
+    _add_monitor_args(monitor)
+
+    # Wrap subcommand
+    wrap = subparsers.add_parser(
+        "wrap",
+        help="Run a command with deep mode reporting enabled",
+    )
+    wrap.add_argument(
+        "wrapped_cmd",
+        nargs=argparse.REMAINDER,
+        help="Command to run with VRAMTOP_REPORT=1",
+    )
+
+    # Add monitor args to the top-level parser too for backward compat
+    _add_monitor_args(parser)
+
+    return parser
+
+
+def _add_monitor_args(parser: argparse.ArgumentParser) -> None:
+    """Add monitor-mode arguments to a parser."""
     parser.add_argument(
         "--no-kill",
         action="store_true",
@@ -52,14 +82,10 @@ def _build_parser() -> argparse.ArgumentParser:
         metavar="FILE",
         help="Log GPU/process data to a CSV file",
     )
-    return parser
 
 
-def main() -> None:
-    """Entry point for the vramtop CLI."""
-    parser = _build_parser()
-    args = parser.parse_args()
-
+def _run_monitor(args: argparse.Namespace) -> None:
+    """Run the TUI monitor."""
     from vramtop.backends import get_backend
     from vramtop.backends.base import BackendError
     from vramtop.config import ConfigHolder
@@ -98,3 +124,37 @@ def main() -> None:
         csv_path=csv_path,
     )
     app.run()
+
+
+def _run_wrap(args: argparse.Namespace) -> None:
+    """Run a command with VRAMTOP_REPORT=1 set."""
+    cmd: list[str] = args.wrapped_cmd
+    if not cmd:
+        print("Error: wrap requires a command to run.", file=sys.stderr)
+        raise SystemExit(1)
+
+    # Strip leading '--' if present
+    if cmd and cmd[0] == "--":
+        cmd = cmd[1:]
+
+    if not cmd:
+        print("Error: wrap requires a command to run.", file=sys.stderr)
+        raise SystemExit(1)
+
+    env = os.environ.copy()
+    env["VRAMTOP_REPORT"] = "1"
+
+    result = subprocess.run(cmd, env=env)
+    raise SystemExit(result.returncode)
+
+
+def main() -> None:
+    """Entry point for the vramtop CLI."""
+    parser = _build_parser()
+    args = parser.parse_args()
+
+    if args.command == "wrap":
+        _run_wrap(args)
+    else:
+        # Default to monitor (both "monitor" subcommand and no subcommand)
+        _run_monitor(args)

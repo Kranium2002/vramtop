@@ -7,10 +7,14 @@ Screen {
 
 /* GPU card container */
 GPUCard {
-    border: solid $primary;
+    border: round $primary;
     padding: 0 1;
     margin: 0 0 1 0;
     height: auto;
+}
+
+#gpu-container {
+    padding: 0 1;
 }
 
 /* Memory bar */
@@ -63,4 +67,15 @@ ProcessTable {
     height: auto;
     max-height: 16;
     margin: 0 0 0 0;
+}
+
+/* Detail panel */
+DetailPanel {
+    dock: right;
+    width: 40;
+    display: none;
+}
+
+DetailPanel.visible {
+    display: block;
 }

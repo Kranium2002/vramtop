@@ -45,6 +45,14 @@ def mock_identity() -> ProcessIdentity:
     return ProcessIdentity(pid=12345, starttime=99999)
 
 
+@pytest.fixture(autouse=True)
+def _no_pid_resolve(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Disable Docker PID namespace resolution in tests."""
+    monkeypatch.setattr(
+        "vramtop.ui.widgets.kill_dialog._resolve_pid", lambda pid: pid
+    )
+
+
 # ---------------------------------------------------------------------------
 # Audit log tests
 # ---------------------------------------------------------------------------

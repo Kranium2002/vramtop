@@ -20,6 +20,13 @@ if TYPE_CHECKING:
 from vramtop.permissions import is_same_user
 from vramtop.process_identity import get_process_identity
 
+# Resolve Docker PID namespace: NVML host PID → container PID.
+try:
+    from vramtop.enrichment import _resolve_pid
+except ImportError:  # pragma: no cover
+    def _resolve_pid(pid: int) -> int:  # type: ignore[misc]
+        return pid
+
 logger = logging.getLogger(__name__)
 
 _AUDIT_DIR = Path("~/.local/share/vramtop").expanduser()
@@ -130,13 +137,16 @@ class KillDialog(ModalScreen[bool]):
         classes: str | None = None,
     ) -> None:
         super().__init__(name=name, id=id, classes=classes)
-        self._pid = pid
+        self._display_pid = pid  # NVML PID (shown in UI)
+        # Resolve Docker PID namespace: NVML host PID → container PID
+        # for /proc reads, os.kill, and identity checks.
+        self._pid = _resolve_pid(pid)
         self._process_name = process_name
         self._enable_kill = enable_kill
         self._sigterm_sent = False
         self._sigterm_time: float = 0.0
         # Capture identity at dialog creation for re-verification
-        self._original_identity = get_process_identity(pid)
+        self._original_identity = get_process_identity(self._pid)
 
     def compose(self) -> ComposeResult:
         with Static(id="kill-container"):
@@ -156,17 +166,17 @@ class KillDialog(ModalScreen[bool]):
         # Check --no-kill / config flag
         if not self._enable_kill:
             info.update(
-                f"[bold]PID:[/bold] {self._pid}\n"
+                f"[bold]PID:[/bold] {self._display_pid}\n"
                 f"[bold]Name:[/bold] {self._process_name}\n"
             )
             status.update("[bold red]Kill is disabled (--no-kill or config).[/bold red]")
             sigterm_btn.disabled = True
             return
 
-        # Same-UID check
+        # Same-UID check (uses resolved container PID)
         if not is_same_user(self._pid):
             info.update(
-                f"[bold]PID:[/bold] {self._pid}\n"
+                f"[bold]PID:[/bold] {self._display_pid}\n"
                 f"[bold]Name:[/bold] {self._process_name}\n"
             )
             status.update(
@@ -202,7 +212,7 @@ class KillDialog(ModalScreen[bool]):
                 pass
 
         info.update(
-            f"[bold]PID:[/bold] {self._pid}\n"
+            f"[bold]PID:[/bold] {self._display_pid}\n"
             f"[bold]Name:[/bold] {self._process_name}\n"
             f"[bold]Age:[/bold] {age_str}\n"
             f"[bold]Identity:[/bold] ({identity.pid}, {identity.starttime})"
@@ -347,16 +357,19 @@ class KillDialog(ModalScreen[bool]):
             })
             return
 
+        audit_result = "sent"
         try:
             os.kill(self._pid, signal.SIGKILL)
         except ProcessLookupError:
             status.update("[bold]Process already exited.[/bold]")
+            audit_result = "process_gone"
         except PermissionError:
             status.update("[bold red]Permission denied for SIGKILL.[/bold red]")
+            audit_result = "permission_denied"
 
         _write_audit({
             "action": "kill_sigkill",
-            "result": "sent",
+            "result": audit_result,
             "pid": self._pid,
             "name": self._process_name,
             "identity": (

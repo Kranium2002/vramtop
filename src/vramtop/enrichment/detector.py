@@ -21,9 +21,12 @@ _CMDLINE_PATTERNS: list[tuple[re.Pattern[str], str]] = [
 ]
 
 # Maps patterns: (library regex, framework_name)
+# IMPORTANT: JAX patterns come BEFORE PyTorch because JAX environments often
+# also have libtorch installed (via torch-xla or shared conda envs). Checking
+# JAX first prevents misdetection as PyTorch.
 _MAPS_PATTERNS: list[tuple[re.Pattern[str], str]] = [
+    (re.compile(r"libxla_extension|libxla|libjax|libtpu"), "jax"),
     (re.compile(r"libtorch"), "pytorch"),
-    (re.compile(r"libjax"), "jax"),
     (re.compile(r"libtensorflow"), "tensorflow"),
 ]
 
@@ -39,11 +42,16 @@ def detect_framework(
     now = time.monotonic()
     key = (pid, starttime)
 
-    cached = _cache.get(key)
-    if cached is not None:
-        fw, ver, ts = cached
-        if now - ts < _CACHE_TTL:
-            return fw, ver
+    # Don't use cache when starttime=0 (unknown identity) — PID recycling
+    # could alias different processes under the same (pid, 0) key.
+    has_identity = starttime != 0
+
+    if has_identity:
+        cached = _cache.get(key)
+        if cached is not None:
+            fw, ver, ts = cached
+            if now - ts < _CACHE_TTL:
+                return fw, ver
 
     if not is_same_user(pid):
         return None, None
@@ -52,7 +60,8 @@ def detect_framework(
     if fw is None:
         fw, ver = _detect_from_maps(pid)
 
-    _cache[key] = (fw, ver, now)
+    if has_identity:
+        _cache[key] = (fw, ver, now)
     return fw, ver
 
 

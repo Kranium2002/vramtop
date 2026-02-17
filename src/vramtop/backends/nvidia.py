@@ -139,8 +139,11 @@ class NVMLClient(GPUBackend):
         ts_mono = time.monotonic()
         ts_wall = time.time()
 
-        driver_version = pynvml.nvmlSystemGetDriverVersion()
-        nvml_version = pynvml.nvmlSystemGetNVMLVersion()
+        try:
+            driver_version = pynvml.nvmlSystemGetDriverVersion()
+            nvml_version = pynvml.nvmlSystemGetNVMLVersion()
+        except pynvml.NVMLError as err:
+            raise _translate_nvml_error(err) from err
 
         count = self.device_count()
         devices: list[GPUDevice] = []
@@ -223,7 +226,10 @@ class NVMLClient(GPUBackend):
                 return get_v2(handle)
         except pynvml.NVMLError:
             pass
-        return pynvml.nvmlDeviceGetMemoryInfo(handle)
+        try:
+            return pynvml.nvmlDeviceGetMemoryInfo(handle)
+        except pynvml.NVMLError as err:
+            raise _translate_nvml_error(err) from err
 
     @staticmethod
     def _get_merged_processes(handle: Any) -> list[GPUProcess]:
@@ -249,20 +255,22 @@ class NVMLClient(GPUBackend):
         except (BackendError, pynvml.NVMLError):
             logger.debug("Failed to get graphics processes")
 
-        # Merge by PID: track memory and type per PID
+        # Merge by PID: track memory and type per PID.
+        # IMPORTANT: A process appearing in BOTH lists reports the SAME
+        # usedGpuMemory in each — it is NOT additive. Use max(), not sum().
         pid_memory: dict[int, int] = {}
         pid_types: dict[int, set[str]] = {}
 
         for proc in compute_procs:
             pid = proc.pid
             mem = proc.usedGpuMemory or 0
-            pid_memory[pid] = pid_memory.get(pid, 0) + mem
+            pid_memory[pid] = max(pid_memory.get(pid, 0), mem)
             pid_types.setdefault(pid, set()).add("compute")
 
         for proc in graphics_procs:
             pid = proc.pid
             mem = proc.usedGpuMemory or 0
-            pid_memory[pid] = pid_memory.get(pid, 0) + mem
+            pid_memory[pid] = max(pid_memory.get(pid, 0), mem)
             pid_types.setdefault(pid, set()).add("graphics")
 
         result: list[GPUProcess] = []

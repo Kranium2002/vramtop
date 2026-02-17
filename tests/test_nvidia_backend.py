@@ -113,7 +113,12 @@ class TestComputeGraphicsMerge:
             assert proc.process_type == "compute"
 
     def test_mixed_process_merge(self, mock_nvml_mixed_gpu):
-        """PID 2001 in both lists → compute+graphics with summed memory."""
+        """PID 2001 in both lists → compute+graphics with max memory (not summed).
+
+        NVML reports the SAME total allocation in both lists for a process
+        with both compute and graphics contexts. Using max() prevents
+        double-counting.
+        """
         mod = _fresh_nvidia_module(mock_nvml_mixed_gpu)
         with mod.NVMLClient() as client:
             snap = client.snapshot()
@@ -125,8 +130,9 @@ class TestComputeGraphicsMerge:
         assert 2001 in procs_by_pid
         merged = procs_by_pid[2001]
         assert merged.process_type == "compute+graphics"
-        # Memory should be summed: 4GB (compute) + 1GB (graphics) = 5GB
-        assert merged.used_memory_bytes == 5_000_000_000
+        # Memory uses max (not sum): max(4GB compute, 1GB graphics) = 4GB
+        # NVML reports the same allocation in both lists, not separate ones
+        assert merged.used_memory_bytes == 4_000_000_000
 
         # PID 2002 is only in graphics list
         assert 2002 in procs_by_pid

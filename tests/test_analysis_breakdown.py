@@ -70,16 +70,18 @@ class TestEstimateBreakdown:
         r3 = estimate_breakdown(0, [])
         assert "estimate" in r3.label
 
-    def test_confidence_high_for_typical_ratio(self):
-        # 60% weights -> high confidence
+    def test_confidence_moderate_for_typical_ratio(self):
+        # 60% weights -> moderate confidence (file-size estimates are imprecise)
         total = 10_000
         weights = [6_000]
         result = estimate_breakdown(total, weights)
-        assert result.confidence >= 0.7
+        assert result.confidence >= 0.4
+        # Capped at 0.5 — file sizes don't reliably reflect in-memory sizes
+        assert result.confidence <= 0.6
 
     def test_confidence_lower_for_extreme_ratio(self):
         # 5% weights -> low confidence
         total = 10_000
         weights = [500]
         result = estimate_breakdown(total, weights)
-        assert result.confidence < 0.7
+        assert result.confidence < 0.4
