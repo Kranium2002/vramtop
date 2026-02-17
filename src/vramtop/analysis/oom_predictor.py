@@ -6,10 +6,12 @@ Key design principles:
 - Severity levels: warning (yellow) vs critical (red) based on time remaining.
 - Always show ranges, never point estimates.
 - Err on the side of silence — a false alarm trains users to ignore alerts.
+- Use sliding window (not EMA) for growth detection — reacts quickly to stops.
 """
 
 from __future__ import annotations
 
+from collections import deque
 from dataclasses import dataclass
 from enum import Enum
 
@@ -37,22 +39,21 @@ _MIN_UTILIZATION_PCT = 50.0  # Don't predict OOM if <50% used
 _HIGH_UTILIZATION_PCT = 85.0  # Show "Low VRAM" even without growth
 _CRITICAL_SECONDS = 300.0  # <5 min = critical severity
 _CAP_SECONDS = 3600.0  # Don't show predictions beyond 1 hour
+_WINDOW_SIZE = 5  # Sliding window for growth detection
+_GROWTH_FRACTION = 0.6  # >=60% of window samples must be positive
 
 
 class OOMPredictor:
     """GPU-level range-based OOM predictor.
 
-    This predictor works on GPU-level memory deltas (total used on device),
-    NOT per-process phases. This is more accurate because:
-    - Multiple processes can grow/shrink simultaneously
-    - OOM is a GPU-wide event, not per-process
-    - Avoids the "which process to pick" problem
+    Uses a sliding window of recent memory deltas for growth detection.
+    This reacts quickly when growth stops (unlike EMA which has a long tail).
 
     Rules:
     1. Only predict if growth sustained > min_sustained_samples.
     2. Only predict if utilization > 50% (plenty of room = no concern).
     3. Require confidence > 0.3 before displaying alerts.
-    4. Use rate range (min/max EMA) for confidence interval.
+    4. Use rate range (min/max over window) for confidence interval.
     5. Never show point estimate — always a range.
     6. Cap at ">1h". Suppress noise below min_rate threshold.
     7. Show "Low VRAM" warning at >85% even without active growth.
@@ -66,12 +67,10 @@ class OOMPredictor:
         self.min_sustained_samples = min_sustained_samples
         self.min_rate_mb_per_sec = min_rate_mb_per_sec
 
+        self._window: deque[float] = deque(maxlen=_WINDOW_SIZE)
         self._growing_samples: int = 0
-        self._ema_rate: float = 0.0
-        self._ema_alpha: float = 0.3
         self._growing_min_rate: float | None = None
         self._growing_max_rate: float | None = None
-        self._was_growing: bool = False
 
     def update(
         self,
@@ -93,29 +92,36 @@ class OOMPredictor:
         utilization = (used_mb / max(total_mb, 1.0)) * 100.0
         rate = delta_mb / max(dt_seconds, 0.001)
 
-        # Update EMA rate
-        self._ema_rate = self._ema_alpha * rate + (1 - self._ema_alpha) * self._ema_rate
+        # Add to sliding window
+        self._window.append(rate)
 
-        # Determine if GPU memory is actively growing
-        is_growing = self._ema_rate > self.min_rate_mb_per_sec
+        # Determine if GPU memory is actively growing using the window.
+        # Require >= 60% of recent samples to show positive growth above noise.
+        if len(self._window) >= 3:
+            positive_count = sum(
+                1 for r in self._window if r > self.min_rate_mb_per_sec
+            )
+            positive_frac = positive_count / len(self._window)
+            median_rate = sorted(self._window)[len(self._window) // 2]
+            is_growing = (
+                positive_frac >= _GROWTH_FRACTION
+                and median_rate > self.min_rate_mb_per_sec
+            )
+        else:
+            is_growing = False
+            median_rate = 0.0
 
         if is_growing:
             self._growing_samples += 1
-            if not self._was_growing:
-                # Just started growing — reset range
-                self._growing_min_rate = self._ema_rate
-                self._growing_max_rate = self._ema_rate
-            else:
-                if self._growing_min_rate is None or self._ema_rate < self._growing_min_rate:
-                    self._growing_min_rate = self._ema_rate
-                if self._growing_max_rate is None or self._ema_rate > self._growing_max_rate:
-                    self._growing_max_rate = self._ema_rate
+            # Track min/max of median rate for range computation
+            if self._growing_min_rate is None or median_rate < self._growing_min_rate:
+                self._growing_min_rate = median_rate
+            if self._growing_max_rate is None or median_rate > self._growing_max_rate:
+                self._growing_max_rate = median_rate
         else:
             self._growing_samples = 0
             self._growing_min_rate = None
             self._growing_max_rate = None
-
-        self._was_growing = is_growing
 
         # Rule 7: High utilization warning (even without growth)
         if utilization >= _HIGH_UTILIZATION_PCT and not is_growing:
@@ -149,7 +155,7 @@ class OOMPredictor:
                 utilization_pct=utilization,
             )
 
-        # Compute confidence: ramps with sustained samples, reduced by rate variance
+        # Compute confidence: ramps with sustained samples
         confidence = min(1.0, self._growing_samples / 30.0)
 
         # Rule 3: Require minimum confidence
@@ -159,7 +165,7 @@ class OOMPredictor:
                 utilization_pct=utilization,
             )
 
-        # Compute time-to-OOM range
+        # Compute time-to-OOM range using tracked min/max rates
         min_rate = self._growing_min_rate
         max_rate = self._growing_max_rate
         if min_rate is None or max_rate is None:
