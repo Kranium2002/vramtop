@@ -32,6 +32,14 @@ def _step_timeseries(
     return ts
 
 
+def _mock_numpy() -> MagicMock:
+    """Create a mock numpy module with a working ``array()``."""
+    mock_np = MagicMock()
+    mock_np.array = lambda data, dtype=None: data  # passthrough
+    mock_np.float64 = float
+    return mock_np
+
+
 # ---------------------------------------------------------------------------
 # Penalty presets
 # ---------------------------------------------------------------------------
@@ -152,15 +160,12 @@ class TestDetectWithMockRuptures:
         detector = PELTDetector(penalty=5.0, min_size=5)
         ts = _step_timeseries([100.0, 500.0], segment_length=30)
 
-        # Mock ruptures if not installed
         mock_algo = MagicMock()
         mock_algo.predict.return_value = [30, len(ts)]
 
-        mock_pelt_cls = MagicMock()
-        mock_pelt_cls.return_value.fit.return_value = mock_algo
-
         with patch("vramtop.analysis.pelt_detector._HAS_RUPTURES", True), \
-             patch("vramtop.analysis.pelt_detector.ruptures", create=True) as mock_rup:
+             patch("vramtop.analysis.pelt_detector.ruptures", create=True) as mock_rup, \
+             patch.dict(sys.modules, {"numpy": _mock_numpy()}):
             mock_rup.Pelt.return_value.fit.return_value = mock_algo
             result = detector.detect_changepoints(ts)
 
@@ -177,7 +182,8 @@ class TestDetectWithMockRuptures:
         mock_algo.predict.return_value = [len(ts)]
 
         with patch("vramtop.analysis.pelt_detector._HAS_RUPTURES", True), \
-             patch("vramtop.analysis.pelt_detector.ruptures", create=True) as mock_rup:
+             patch("vramtop.analysis.pelt_detector.ruptures", create=True) as mock_rup, \
+             patch.dict(sys.modules, {"numpy": _mock_numpy()}):
             mock_rup.Pelt.return_value.fit.return_value = mock_algo
             result = detector.detect_changepoints(ts)
 
@@ -192,7 +198,8 @@ class TestDetectWithMockRuptures:
         mock_algo.predict.return_value = [20, 40, len(ts)]
 
         with patch("vramtop.analysis.pelt_detector._HAS_RUPTURES", True), \
-             patch("vramtop.analysis.pelt_detector.ruptures", create=True) as mock_rup:
+             patch("vramtop.analysis.pelt_detector.ruptures", create=True) as mock_rup, \
+             patch.dict(sys.modules, {"numpy": _mock_numpy()}):
             mock_rup.Pelt.return_value.fit.return_value = mock_algo
             result = detector.detect_changepoints(ts)
 
@@ -259,7 +266,8 @@ class TestMinSizeEnforcement:
         mock_algo.predict.return_value = [len(ts)]
 
         with patch("vramtop.analysis.pelt_detector._HAS_RUPTURES", True), \
-             patch("vramtop.analysis.pelt_detector.ruptures", create=True) as mock_rup:
+             patch("vramtop.analysis.pelt_detector.ruptures", create=True) as mock_rup, \
+             patch.dict(sys.modules, {"numpy": _mock_numpy()}):
             mock_rup.Pelt.return_value.fit.return_value = mock_algo
             result = detector.detect_changepoints(ts)
 
@@ -279,7 +287,8 @@ class TestMinSizeEnforcement:
         mock_algo.predict.return_value = [len(ts)]
 
         with patch("vramtop.analysis.pelt_detector._HAS_RUPTURES", True), \
-             patch("vramtop.analysis.pelt_detector.ruptures", create=True) as mock_rup:
+             patch("vramtop.analysis.pelt_detector.ruptures", create=True) as mock_rup, \
+             patch.dict(sys.modules, {"numpy": _mock_numpy()}):
             mock_rup.Pelt.return_value.fit.return_value = mock_algo
             detector.detect_changepoints(ts)
 

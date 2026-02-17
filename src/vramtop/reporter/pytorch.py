@@ -30,7 +30,7 @@ _lock = threading.Lock()
 def _get_memory_stats(cuda_device: int) -> MemoryMsg:
     """Read PyTorch CUDA memory stats, fallback to zeros."""
     try:
-        import torch
+        import torch  # type: ignore[import-not-found,unused-ignore]
 
         stats = torch.cuda.memory_stats(cuda_device)
         allocated = stats.get("allocated_bytes.all.current", 0) / (1024 * 1024)

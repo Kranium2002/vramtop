@@ -14,10 +14,11 @@ from vramtop.analysis.phase_detector import Phase
 logger = logging.getLogger(__name__)
 
 try:
-    import ruptures  # type: ignore[import-untyped]
+    import ruptures  # type: ignore[import-not-found,import-untyped,unused-ignore]
 
     _HAS_RUPTURES = True
 except ImportError:
+    ruptures = None  # type: ignore[assignment,unused-ignore]
     _HAS_RUPTURES = False
     logger.warning(
         "ruptures not installed — PELT changepoint detection unavailable. "
@@ -77,12 +78,15 @@ class PELTDetector:
         If ``ruptures`` is not installed, or the timeseries is shorter
         than ``min_size``, an empty list is returned.
         """
-        if not _HAS_RUPTURES:
+        if not _HAS_RUPTURES or ruptures is None:
             return []
         if len(timeseries) < self.min_size:
             return []
 
-        import numpy as np
+        try:
+            import numpy as np  # type: ignore[import-not-found,unused-ignore]
+        except ImportError:
+            return []
 
         signal = np.array(timeseries, dtype=np.float64)
         algo = ruptures.Pelt(model="l2", min_size=self.min_size).fit(signal)
