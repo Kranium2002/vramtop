@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     from textual.app import ComposeResult
 
     from vramtop.analysis.phase_detector import PhaseState
+    from vramtop.analysis.survival import SurvivalPrediction
     from vramtop.backends.base import GPUDevice
 
 
@@ -63,6 +64,8 @@ class GPUCard(Static):
         device: GPUDevice,
         phase_states: dict[int, PhaseState],
         oom_prediction: OOMPrediction | None,
+        survival_states: dict[int, SurvivalPrediction] | None = None,
+        enrichments: dict[int, dict[str, object]] | None = None,
     ) -> None:
         """Update all child widgets with new device data.
 
@@ -70,20 +73,41 @@ class GPUCard(Static):
             device: Current GPU device snapshot.
             phase_states: Mapping from PID to PhaseState.
             oom_prediction: Current OOM prediction or None.
+            survival_states: Optional mapping from PID to SurvivalPrediction.
+            enrichments: Optional mapping from PID to enrichment data dict.
         """
         if self._lost:
             return
 
-        # Update header with formatted memory
+        # Update header with formatted memory and Unicode separators
         header = self.query_one("#gpu-header", Static)
         used_str = _format_mem_mb(device.used_memory_bytes)
         total_str = _format_mem_mb(device.total_memory_bytes)
+
+        # Color-coded temperature
+        temp = device.temperature_celsius
+        if temp >= 85:
+            temp_str = f"[bold red]{temp}°C[/bold red]"
+        elif temp >= 70:
+            temp_str = f"[yellow]{temp}°C[/yellow]"
+        else:
+            temp_str = f"[green]{temp}°C[/green]"
+
+        # Color-coded utilization
+        util = device.gpu_util_percent
+        if util >= 90:
+            util_str = f"[bold red]{util}%[/bold red]"
+        elif util >= 60:
+            util_str = f"[yellow]{util}%[/yellow]"
+        else:
+            util_str = f"[green]{util}%[/green]"
+
         header.update(
-            f"[bold]GPU {device.index}: {device.name}[/bold]"
-            f"  |  {used_str}/{total_str}"
-            f"  |  Util: {device.gpu_util_percent}%"
-            f"  |  Temp: {device.temperature_celsius}C"
-            f"  |  Power: {device.power_watts:.0f}W"
+            f"[bold]GPU {device.index}[/bold] {device.name}"
+            f"  [dim]|[/dim]  {used_str}/{total_str}"
+            f"  [dim]|[/dim]  Util {util_str}"
+            f"  [dim]|[/dim]  {temp_str}"
+            f"  [dim]|[/dim]  {device.power_watts:.0f}W"
         )
 
         # Update memory bar (used, free, total — reserved is derived)
@@ -107,6 +131,8 @@ class GPUCard(Static):
             list(device.processes),
             phase_states,
             device.total_memory_bytes,
+            survival_states=survival_states,
+            enrichments=enrichments,
         )
 
         # Update OOM alert

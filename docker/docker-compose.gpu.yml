@@ -1,0 +1,50 @@
+# Multi-container GPU workload for testing vramtop container detection.
+#
+# Usage:
+#   docker compose -f docker/docker-compose.gpu.yml up --build
+#
+# Requires: NVIDIA Container Toolkit (nvidia-docker2)
+# Each container allocates a different amount of VRAM.
+
+services:
+  gpu-workload-small:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.gpu-workload
+    command: ["--mb", "128", "--duration", "120"]
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    container_name: vramtop-test-small
+
+  gpu-workload-medium:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.gpu-workload
+    command: ["--mb", "512", "--duration", "120"]
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    container_name: vramtop-test-medium
+
+  gpu-workload-large:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.gpu-workload
+    command: ["--mb", "1024", "--duration", "120"]
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    container_name: vramtop-test-large

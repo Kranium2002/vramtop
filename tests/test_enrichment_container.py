@@ -8,7 +8,9 @@ import pytest
 
 from vramtop.enrichment.container import (
     ContainerInfo,
+    _parse_container_from_cgroup,
     detect_container,
+    detect_process_container,
     get_nvidia_visible_devices,
     _reset_cache,
 )
@@ -133,3 +135,69 @@ class TestNvidiaVisibleDevices:
     def test_env_absent(self):
         with patch.dict("os.environ", {}, clear=True):
             assert get_nvidia_visible_devices() is None
+
+
+class TestCgroupV2Parsing:
+    """Test cgroupv2 scope-based container detection."""
+
+    def test_docker_v2_scope(self) -> None:
+        content = "0::/system.slice/docker-abcdef123456abcdef123456.scope\n"
+        result = _parse_container_from_cgroup(content)
+        assert result is not None
+        assert result.runtime == "docker"
+        assert result.container_id == "abcdef123456"
+
+    def test_podman_v2_scope(self) -> None:
+        content = "0::/user.slice/podman-deadbeef1234abcdef.scope\n"
+        result = _parse_container_from_cgroup(content)
+        assert result is not None
+        assert result.runtime == "podman"
+        assert result.container_id == "deadbeef1234"
+
+    def test_containerd_v2_scope(self) -> None:
+        content = "0::/cri-containerd-aabbccdd112233445566.scope\n"
+        result = _parse_container_from_cgroup(content)
+        assert result is not None
+        assert result.runtime == "containerd"
+        assert result.container_id == "aabbccdd1122"
+
+    def test_v2_no_container(self) -> None:
+        content = "0::/init.scope\n"
+        result = _parse_container_from_cgroup(content)
+        assert result is None
+
+
+class TestPerProcessContainerDetection:
+    """Test detect_process_container() per-process cgroup detection."""
+
+    def test_docker_process(self) -> None:
+        cgroup = "12:devices:/docker/aabbccdd112233445566778899\n"
+        with (
+            patch("vramtop.enrichment.container.is_same_user", return_value=True),
+            patch("builtins.open", mock_open(read_data=cgroup)),
+        ):
+            result = detect_process_container(1234)
+        assert result is not None
+        assert result.runtime == "docker"
+
+    def test_host_process(self) -> None:
+        cgroup = "12:cpu:/user.slice/user-1000.slice\n"
+        with (
+            patch("vramtop.enrichment.container.is_same_user", return_value=True),
+            patch("builtins.open", mock_open(read_data=cgroup)),
+        ):
+            result = detect_process_container(5678)
+        assert result is None
+
+    def test_different_uid_rejected(self) -> None:
+        with patch("vramtop.enrichment.container.is_same_user", return_value=False):
+            result = detect_process_container(1234)
+        assert result is None
+
+    def test_process_gone(self) -> None:
+        with (
+            patch("vramtop.enrichment.container.is_same_user", return_value=True),
+            patch("builtins.open", side_effect=ProcessLookupError),
+        ):
+            result = detect_process_container(1234)
+        assert result is None

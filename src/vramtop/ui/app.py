@@ -13,16 +13,22 @@ from typing import TYPE_CHECKING
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import VerticalScroll
 from textual.widgets import Footer, Header, Static
 
 from vramtop.analysis.oom_predictor import OOMPredictor
 from vramtop.analysis.phase_detector import PhaseDetector, PhaseState
+from vramtop.analysis.survival import (
+    SurvivalPrediction,
+    check_collective_pressure,
+    estimate_peak,
+    predict_survival,
+)
 from vramtop.backends.base import BackendError, GPULostError, MemorySnapshot, ProcessIdentity
 from vramtop.config import ConfigHolder, VramtopConfig
 from vramtop.ui.themes import get_theme_names, load_theme
 from vramtop.ui.widgets.detail_panel import DetailPanel
 from vramtop.ui.widgets.kill_dialog import KillDialog
+from vramtop.ui.widgets.space_bg import SpaceScroll
 
 if TYPE_CHECKING:
     from vramtop.backends.base import GPUBackend
@@ -37,8 +43,13 @@ except ImportError:  # pragma: no cover
 
 CSS_PATH = Path(__file__).parent / "styles.tcss"
 
-# Enrichment cache TTL in seconds
-_ENRICHMENT_TTL = 30.0
+# Enrichment cache TTL in seconds.  Protects against repeated expensive
+# /proc reads (maps can be megabytes, fd scan walks hundreds of entries).
+# Framework/model/container data is static per process — no need to
+# re-detect every second.  Dynamic data (deep mode, scraping) is handled
+# separately: detail panel queries deep mode sockets directly, and HTTP
+# scrapers have their own rate limiter.
+_ENRICHMENT_TTL = 10.0
 
 # Maximum length for displayed process names before truncation
 _MAX_PROCESS_NAME_LEN = 40
@@ -127,8 +138,8 @@ class VramtopApp(App[None]):
         self._gpu_cards: dict[int, GPUCard | Static] = {}
         # Per-(gpu_index, ProcessIdentity) phase detectors
         self._phase_detectors: dict[tuple[int, ProcessIdentity], PhaseDetector] = {}
-        # Latest phase states per (gpu_index, pid)
-        self._phase_states: dict[tuple[int, int], PhaseState] = {}
+        # Latest phase states per (gpu_index, ProcessIdentity)
+        self._phase_states: dict[tuple[int, ProcessIdentity], PhaseState] = {}
         # Per-GPU OOM predictors and previous used memory
         self._oom_predictors: dict[int, OOMPredictor] = {}
         self._prev_gpu_used_mb: dict[int, float] = {}
@@ -137,6 +148,15 @@ class VramtopApp(App[None]):
         self._poll_timer: object | None = None
         # Enrichment cache: (pid, starttime) -> (enrichment_dict, timestamp)
         self._enrichment_cache: dict[tuple[int, int], tuple[dict[str, object], float]] = {}
+        # Per-process peak memory tracking: (gpu_index, ProcessIdentity) -> peak bytes
+        self._peak_memory: dict[tuple[int, ProcessIdentity], int] = {}
+        # Per-process VRAM timeseries for PELT changepoint detection
+        # (gpu_index, ProcessIdentity) -> list of used_memory in MB
+        self._process_timeseries: dict[tuple[int, ProcessIdentity], list[float]] = {}
+        # Saved PELT analysis keyed by sanitized process name.
+        # Persists after process exits so the user can review historical analysis.
+        # name -> {pelt_phases, pelt_changepoints, pelt_current_phase, ...}
+        self._saved_analysis: dict[str, dict[str, object]] = {}
         # Layout tracking
         self._layout_mode: LayoutMode = LayoutMode.FULL
         # Theme cycling
@@ -178,7 +198,7 @@ class VramtopApp(App[None]):
 
     def compose(self) -> ComposeResult:
         yield Header()
-        yield VerticalScroll(
+        yield SpaceScroll(
             Static("Loading...", id="loading-msg"),
             id="gpu-container",
         )
@@ -317,10 +337,17 @@ class VramtopApp(App[None]):
         now = time.monotonic()
         dt = now - self._last_snapshot_time if self._last_snapshot_time > 0 else 1.0
 
-        # Attempt enrichment for each process
-        self._enrich_processes(snapshot, now)
+        # Attempt enrichment for each process (run in thread to avoid
+        # blocking the event loop with /proc reads and HTTP scrapes)
+        await asyncio.to_thread(self._enrich_processes, snapshot, now)
 
         await self._update_cards(snapshot, dt)
+
+        # Auto-refresh the detail panel if it's open
+        self._refresh_detail_panel()
+
+        # Prune caches for processes no longer in the snapshot
+        self._prune_dead_processes(snapshot)
 
         self._last_snapshot = snapshot
         self._last_snapshot_time = now
@@ -344,15 +371,22 @@ class VramtopApp(App[None]):
         for device in snapshot.devices:
             for proc in device.processes:
                 cache_key = (proc.identity.pid, proc.identity.starttime)
+                # Don't cache enrichment when starttime=0 (unknown identity).
+                # PID recycling could alias different processes under the same
+                # (pid, 0) key, causing wrong framework/model associations.
+                has_identity = proc.identity.starttime != 0
                 cached = self._enrichment_cache.get(cache_key)
-                if cached is not None and (now - cached[1]) < _ENRICHMENT_TTL:
+                if has_identity and cached is not None and (now - cached[1]) < _ENRICHMENT_TTL:
                     continue
                 try:
                     result = enrich_process(
-                        proc.identity.pid, proc.identity.starttime
+                        proc.identity.pid,
+                        proc.identity.starttime,
+                        scraping_config=self.config.scraping,
                     )
                     enrichment: dict[str, object] = dataclasses.asdict(result)
-                    self._enrichment_cache[cache_key] = (enrichment, now)
+                    if has_identity:
+                        self._enrichment_cache[cache_key] = (enrichment, now)
                 except Exception:
                     logger.debug(
                         "Enrichment failed for PID %d", proc.identity.pid, exc_info=True
@@ -364,6 +398,40 @@ class VramtopApp(App[None]):
         if cached is not None:
             return cached[0]
         return {}
+
+    def _prune_dead_processes(self, snapshot: MemorySnapshot) -> None:
+        """Remove cache entries for processes no longer in the snapshot.
+
+        Prevents unbounded memory growth in long-running sessions where
+        many short-lived GPU processes come and go.
+        """
+        # Build set of all (gpu_index, identity) and (pid, starttime) currently alive
+        alive_keys: set[tuple[int, ProcessIdentity]] = set()
+        alive_cache_keys: set[tuple[int, int]] = set()
+        for device in snapshot.devices:
+            for proc in device.processes:
+                alive_keys.add((device.index, proc.identity))
+                alive_cache_keys.add((proc.identity.pid, proc.identity.starttime))
+
+        # Prune enrichment cache
+        for ck in [k for k in self._enrichment_cache if k not in alive_cache_keys]:
+            del self._enrichment_cache[ck]
+
+        # Prune phase detectors
+        for dk in [k for k in self._phase_detectors if k not in alive_keys]:
+            del self._phase_detectors[dk]
+
+        # Prune phase states
+        for sk in [k for k in self._phase_states if k not in alive_keys]:
+            del self._phase_states[sk]
+
+        # Prune peak memory tracking
+        for pk in [k for k in self._peak_memory if k not in alive_keys]:
+            del self._peak_memory[pk]
+
+        # Prune VRAM timeseries
+        for tk in [k for k in self._process_timeseries if k not in alive_keys]:
+            del self._process_timeseries[tk]
 
     async def _update_cards(self, snapshot: MemorySnapshot, dt: float) -> None:
         """Create or update GPU cards from snapshot data."""
@@ -391,13 +459,14 @@ class VramtopApp(App[None]):
                 if prev_bytes is not None:
                     delta_mb = (proc.used_memory_bytes - prev_bytes) / (1024 * 1024)
                     state = self._phase_detectors[key].update(delta_mb, dt)
-                    self._phase_states[(idx, proc.identity.pid)] = state
+                    self._phase_states[(idx, proc.identity)] = state
 
-            # Gather phase states for this GPU's processes
+            # Gather phase states for this GPU's processes (keyed by PID for
+            # downstream widgets that don't use ProcessIdentity)
             phase_states: dict[int, PhaseState] = {
-                proc.identity.pid: self._phase_states[(idx, proc.identity.pid)]
+                proc.identity.pid: self._phase_states[(idx, proc.identity)]
                 for proc in device.processes
-                if (idx, proc.identity.pid) in self._phase_states
+                if (idx, proc.identity) in self._phase_states
             }
 
             # Get OOM prediction for this GPU (GPU-level, not per-process)
@@ -418,6 +487,67 @@ class VramtopApp(App[None]):
                     dt_seconds=dt,
                 )
 
+            # Compute per-process survival predictions with peak tracking
+            survival_states: dict[int, SurvivalPrediction] = {}
+            estimated_peaks: dict[int, int] = {}
+            for proc in device.processes:
+                pid = proc.identity.pid
+                peak_key = (idx, proc.identity)
+
+                # Track historical peak memory per process
+                prev_peak = self._peak_memory.get(peak_key, 0)
+                current_peak = max(prev_peak, proc.used_memory_bytes)
+                self._peak_memory[peak_key] = current_peak
+
+                # Accumulate VRAM timeseries for PELT analysis
+                ts = self._process_timeseries.setdefault(peak_key, [])
+                ts.append(proc.used_memory_bytes / (1024 * 1024))
+                # Cap at 1000 samples (~16 min at 1s refresh) to bound memory
+                if len(ts) > 1000:
+                    del ts[: len(ts) - 1000]
+
+                enrichment = self._get_enrichment(
+                    proc.identity.pid, proc.identity.starttime
+                )
+                phase_state = phase_states.get(pid)
+                phase_str = phase_state.phase.value if phase_state else "stable"
+                framework = enrichment.get("framework")
+                cmdline = enrichment.get("cmdline")
+                model_size_raw = enrichment.get("estimated_model_size_bytes")
+                model_size_bytes: int | None = (
+                    int(str(model_size_raw)) if model_size_raw is not None else None
+                )
+                scrape_data = enrichment.get("scrape_data")
+                fw_str = str(framework) if framework else None
+                cmd_str = str(cmdline) if cmdline else None
+
+                survival_states[pid] = predict_survival(
+                    phase=phase_str,
+                    framework=fw_str,
+                    cmdline=cmd_str,
+                    model_size_bytes=model_size_bytes,
+                    process_used_bytes=proc.used_memory_bytes,
+                    gpu_free_bytes=device.free_memory_bytes,
+                    gpu_total_bytes=device.total_memory_bytes,
+                    scrape_data=dict(scrape_data) if isinstance(scrape_data, dict) else None,
+                    peak_used_bytes=current_peak if current_peak > 0 else None,
+                )
+
+                # Track estimated peak for collective pressure check
+                estimated_peaks[pid] = estimate_peak(
+                    framework=fw_str,
+                    cmdline=cmd_str,
+                    model_size_bytes=model_size_bytes,
+                    process_used_bytes=proc.used_memory_bytes,
+                    peak_used_bytes=current_peak if current_peak > 0 else None,
+                )
+
+            # Collective pressure: if sum of estimated peaks exceeds GPU total,
+            # upgrade individual verdicts
+            survival_states = check_collective_pressure(
+                survival_states, estimated_peaks, device.total_memory_bytes
+            )
+
             # Create or update the GPU card widget
             if idx not in self._gpu_cards:
                 if GPUCard is not None:
@@ -437,7 +567,20 @@ class VramtopApp(App[None]):
                 card = self._gpu_cards[idx]
 
             if GPUCard is not None and isinstance(card, GPUCard):
-                card.update_device(device, phase_states, oom_prediction)
+                # Build per-PID enrichment dict for the process table
+                proc_enrichments: dict[int, dict[str, object]] = {}
+                for proc in device.processes:
+                    enr = self._get_enrichment(
+                        proc.identity.pid, proc.identity.starttime
+                    )
+                    if enr:
+                        proc_enrichments[proc.identity.pid] = enr
+
+                card.update_device(
+                    device, phase_states, oom_prediction,
+                    survival_states=survival_states,
+                    enrichments=proc_enrichments if proc_enrichments else None,
+                )
             elif isinstance(card, Static):
                 card.update(
                     f"GPU {idx}: {device.name} | "
@@ -484,20 +627,18 @@ class VramtopApp(App[None]):
                 return (proc.identity.pid, proc.name, proc.identity)
         return None
 
-    def action_open_detail(self) -> None:
-        """Open the detail panel for the selected process."""
-        selected = self._get_selected_process()
-        if selected is None:
-            return
-        pid, name, identity = selected
+    def _build_detail_enrichment(
+        self, pid: int, name: str, identity: ProcessIdentity
+    ) -> dict[str, object]:
+        """Build the enrichment dict for the detail panel."""
         enrichment = dict(self._get_enrichment(pid, identity.starttime))
 
         # Add phase info if available
-        for (_gpu_idx, p_id), ps in self._phase_states.items():
-            if p_id == pid:
-                enrichment.setdefault("phase", ps.phase.value)
-                enrichment.setdefault("rate_mb_per_sec", ps.rate_mb_per_sec)
-                enrichment.setdefault("confidence", ps.confidence)
+        for (_gpu_idx, p_identity), ps in self._phase_states.items():
+            if p_identity == identity:
+                enrichment["phase"] = ps.phase.value
+                enrichment["rate_mb_per_sec"] = ps.rate_mb_per_sec
+                enrichment["confidence"] = ps.confidence
                 break
 
         # Add VRAM info from snapshot
@@ -505,10 +646,132 @@ class VramtopApp(App[None]):
             for device in self._last_snapshot.devices:
                 for proc in device.processes:
                     if proc.identity == identity:
-                        enrichment.setdefault("vram_used_bytes", proc.used_memory_bytes)
-                        enrichment.setdefault("vram_total_bytes", device.total_memory_bytes)
+                        enrichment["vram_used_bytes"] = proc.used_memory_bytes
+                        enrichment["vram_total_bytes"] = device.total_memory_bytes
                         break
 
+        # Always query deep mode live (bypass enrichment cache).
+        # The reporter socket updates every second — much faster than the
+        # enrichment cache TTL.  Merge into existing scrape_data.
+        try:
+            from vramtop.enrichment.deep_mode import get_deep_enrichment
+
+            deep = get_deep_enrichment(pid)
+            if deep is not None:
+                existing = enrichment.get("scrape_data")
+                if isinstance(existing, dict):
+                    existing.update(deep)
+                    enrichment["scrape_data"] = existing
+                else:
+                    enrichment["scrape_data"] = deep
+        except Exception:
+            pass
+
+        # PELT changepoint analysis on accumulated timeseries.
+        # Always runs in the detail panel when enough samples are
+        # collected and ruptures is installed.  Falls back gracefully.
+        try:
+            self._add_pelt_analysis(
+                enrichment, identity, process_name=name,
+            )
+        except Exception:
+            logger.debug("PELT analysis failed", exc_info=True)
+
+        # Save full enrichment by process name so it survives process exit.
+        # The detail panel can then show post-mortem data for exited processes.
+        if name:
+            self._saved_analysis[name] = dict(enrichment)
+
+        return enrichment
+
+    def _add_pelt_analysis(
+        self, enrichment: dict[str, object], identity: ProcessIdentity,
+        process_name: str = "",
+    ) -> None:
+        """Run PELT changepoint detection and add results to enrichment."""
+        from vramtop.analysis.pelt_detector import PELTDetector, get_preset_penalty
+        from vramtop.analysis.segment_labels import compute_segment_stats
+
+        # Find the timeseries for this process (any GPU index)
+        ts: list[float] | None = None
+        for (_, p_identity), series in self._process_timeseries.items():
+            if p_identity == identity:
+                ts = series
+                break
+
+        if ts is None or len(ts) < 10:
+            return
+
+        fw = enrichment.get("framework")
+        fw_str = str(fw) if fw else None
+        penalty = get_preset_penalty(fw_str)
+        detector = PELTDetector(penalty=penalty, min_size=10)
+
+        changepoints = detector.detect_changepoints(ts)
+        phases = detector.classify_segments(ts, changepoints)
+
+        if not phases:
+            return
+
+        enrichment["pelt_changepoints"] = changepoints
+        enrichment["pelt_phases"] = [p.value for p in phases]
+        enrichment["pelt_current_phase"] = phases[-1].value
+        enrichment["pelt_num_samples"] = len(ts)
+
+        # Compute labeled segment statistics for chart + summary
+        vram_total_raw = enrichment.get("vram_total_bytes")
+        gpu_total_mb = (
+            float(vram_total_raw) / (1024 * 1024)
+            if isinstance(vram_total_raw, (int, float))
+            else 0.0
+        )
+        segments = compute_segment_stats(ts, changepoints, phases, gpu_total_mb=gpu_total_mb)
+        if segments:
+            enrichment["pelt_segments"] = segments
+            enrichment["pelt_timeseries"] = list(ts)
+
+    def _refresh_detail_panel(self) -> None:
+        """Auto-refresh the detail panel if it's visible.
+
+        If the process is still alive, refreshes with latest data.
+        If the process has exited, shows last known data with [EXITED] tag
+        so deep mode / enrichment data is still visible.
+        """
+        detail = self.query_one("#detail-panel", DetailPanel)
+        if not detail.has_class("visible") or detail.current_pid is None:
+            return
+
+        target_pid = detail.current_pid
+
+        # Try to find the process in the current snapshot
+        if self._last_snapshot is not None:
+            for device in self._last_snapshot.devices:
+                for proc in device.processes:
+                    if proc.identity.pid == target_pid:
+                        from vramtop.sanitize import sanitize_process_name
+
+                        enrichment = self._build_detail_enrichment(
+                            proc.identity.pid, proc.name, proc.identity
+                        )
+                        detail.show_process(
+                            proc.identity.pid,
+                            sanitize_process_name(proc.name),
+                            enrichment,
+                        )
+                        return
+
+        # Process has exited — show last known data with [EXITED] label.
+        # Don't clear the panel; the user explicitly opened it and the
+        # enrichment/deep mode data is still valuable for post-mortem.
+        detail.mark_exited()
+
+    def action_open_detail(self) -> None:
+        """Open the detail panel for the selected process."""
+        selected = self._get_selected_process()
+        if selected is None:
+            return
+        pid, name, identity = selected
+        enrichment = self._build_detail_enrichment(pid, name, identity)
         detail = self.query_one("#detail-panel", DetailPanel)
         from vramtop.sanitize import sanitize_process_name
         detail.show_process(pid, sanitize_process_name(name), enrichment)

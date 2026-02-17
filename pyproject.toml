@@ -75,5 +75,6 @@ packages = ["vramtop"]
 testpaths = ["tests"]
 markers = [
     "gpu: requires NVIDIA GPU (deselect with '-m not gpu')",
+    "docker: requires Docker with NVIDIA GPU support (deselect with '-m not docker')",
 ]
 asyncio_mode = "auto"

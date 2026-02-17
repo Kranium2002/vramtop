@@ -1,0 +1,18 @@
+# Minimal CUDA + PyTorch image for GPU workload testing.
+# Usage:
+#   docker build -f docker/Dockerfile.gpu-workload -t vramtop-workload .
+#   docker run --gpus all vramtop-workload --mb 512 --duration 30
+
+FROM nvidia/cuda:12.4.1-runtime-ubuntu22.04
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 python3-pip && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN pip3 install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cu124
+
+COPY docker/gpu_workload.py /app/gpu_workload.py
+
+WORKDIR /app
+ENTRYPOINT ["python3", "gpu_workload.py"]
+CMD ["--mb", "256", "--duration", "60"]
